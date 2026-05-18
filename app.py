@@ -59,14 +59,21 @@ st.markdown("Esta aplicación predice el tipo de emoción de tus canciones escuc
 
 st.header("Tus Preferencias Musicales Recientes:")
 
-# Recuperar datos del estado del kernel
-if 'df' in globals() and 'sp' in globals():
-    # Ensure 'played_at' is datetime and timezone-converted if not already
-    # This might be redundant if df is already processed in Colab, but good for robustness
-    if not pd.api.types.is_datetime64_any_dtype(df['played_at']):
-        df['played_at'] = pd.to_datetime(df['played_at'])
-        mexico_tz = pytz.timezone('America/Mexico_City')
-        df['played_at'] = df['played_at'].dt.tz_convert(mexico_tz)
+try:
+    # Cargamos el CSV que tienes en tu repositorio
+    df = pd.read_csv('datos_canciones.csv')
+    
+    # Nota: Si necesitas 'sp' para hacer llamadas en vivo a la API de Spotify, 
+    # debes inicializarlo aquí con tus credenciales. 
+    # Si solo vas a usar los datos del CSV, puedes omitir 'sp'.
+    
+except Exception as e:
+    st.error(f"Error al cargar el archivo de datos: {e}")
+    st.stop()
+
+# Todo el código que tenías dentro del IF ahora se ejecuta directo:
+if not pd.api.types.is_datetime64_any_dtype(df['played_at']):
+    df['played_at'] = pd.to_datetime(df['played_at'])
 
     # Calculate hour and day for further analysis
     df['hour_of_day'] = df['played_at'].dt.hour
