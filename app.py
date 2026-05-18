@@ -3,10 +3,22 @@ import pandas as pd
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 import plotly.express as px
-import pytz # Import pytz for timezone conversion
+import pytz
+import os
 
-# Asume que 'sp', 'df', 'artista_favorito', 'cancion_favorita' están disponibles
-# del entorno de Colab después de ejecutar las celdas anteriores.
+# --- 1. CONFIGURACIÓN DE CREDENCIALES DE SPOTIFY ---
+# Pon aquí tus credenciales de Spotify para que la app funcione de forma independiente
+CLIENT_ID = "46051393ce7c473384e5049f1572e543"
+CLIENT_SECRET = "29c7d7910d0e4ce7bdfc59d473cb2bfb"
+
+@st.cache_resource
+def inicializar_spotify():
+    try:
+        auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
+        return spotipy.Spotify(auth_manager=auth_manager)
+    except Exception as e:
+        st.error(f"Error de autenticación con Spotify: {e}")
+        return None
 
 # Función para obtener características de audio de Spotify
 def get_audio_features(track_id, sp_client):
@@ -23,20 +35,18 @@ def get_audio_features(track_id, sp_client):
                 'liveness': audio_features.get('liveness'),
                 'speechiness': audio_features.get('speechiness')
             }
-        else:
-            return None
-    except Exception as e:
-        # st.error(f"Error al obtener las características de audio para {track_id}: {e}") # Comment out for cleaner app
+        return None
+    except Exception:
         return None
 
-# Función para predecir la emoción basada en las características de audio (heurística simple)
+# Función para predecir la emoción basada en las características de audio
 def predict_emotion(features):
     if not features:
-        return "Desconocida" # Changed from a long string for plotting
+        return "Desconocida"
 
-    valence = features.get('valence', 0.5)  # Positividad musical (0.0 a 1.0)
-    energy = features.get('energy', 0.5)    # Intensidad y actividad (0.0 a 1.0)
-    danceability = features.get('danceability', 0.5) # Qué tan bailable es la pista (0.0 a 1.0)
+    valence = features.get('valence', 0.5)
+    energy = features.get('energy', 0.5)
+    danceability = features.get('danceability', 0.5)
 
     if valence > 0.7 and energy > 0.7:
         return "Feliz y Energético 😄"
@@ -59,59 +69,70 @@ st.markdown("Esta aplicación predice el tipo de emoción de tus canciones escuc
 
 st.header("Tus Preferencias Musicales Recientes:")
 
-# Recuperar datos del estado del kernel
-if 'df' in globals() and 'sp' in globals():
-    # Ensure 'played_at' is datetime and timezone-converted if not already
-    # This might be redundant if df is already processed in Colab, but good for robustness
+# Archivo de datos que la app va a leer de forma independiente
+csv_filename = "datos_canciones.csv"
+sp = inicializar_spotify()
+
+if os.path.exists(csv_filename) and sp is not None:
+    # Cargar los datos desde el CSV
+    df = pd.read_csv(csv_filename)
+    
+    # Asegurar que 'played_at' sea datetime y tenga la zona horaria correcta
     if not pd.api.types.is_datetime64_any_dtype(df['played_at']):
         df['played_at'] = pd.to_datetime(df['played_at'])
         mexico_tz = pytz.timezone('America/Mexico_City')
-        df['played_at'] = df['played_at'].dt.tz_convert(mexico_tz)
+        # Si el datetime ya viene con localización, usamos tz_convert, si no, tz_localize
+        try:
+            df['played_at'] = df['played_at'].dt.tz_convert(mexico_tz)
+        except TypeError:
+            df['played_at'] = df['played_at'].dt.tz_localize('UTC').dt.tz_convert(mexico_tz)
 
-    # Calculate hour and day for further analysis
+    # Calcular hora y día de la semana para los análisis
     df['hour_of_day'] = df['played_at'].dt.hour
     df['day_of_week'] = df['played_at'].dt.day_name()
     day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     df['day_of_week'] = pd.Categorical(df['day_of_week'], categories=day_order, ordered=True)
 
-    # Get unique tracks to avoid redundant API calls
-    unique_tracks = df[['Song_ID', 'Song_Name', 'Artist_name']].drop_duplicates(subset=['Song_ID']).copy()
-    unique_tracks['audio_features'] = unique_tracks['Song_ID'].apply(lambda x: get_audio_features(x, sp))
-    unique_tracks['emotion'] = unique_tracks['audio_features'].apply(predict_emotion)
+    # Obtener canciones únicas para no saturar la API de Spotify
+    with st.spinner("Analizando las características de audio de tus canciones..."):
+        unique_tracks = df[['Song_ID', 'Song_Name', 'Artist_name']].drop_duplicates(subset=['Song_ID']).copy()
+        unique_tracks['audio_features'] = unique_tracks['Song_ID'].apply(lambda x: get_audio_features(x, sp))
+        unique_tracks['emotion'] = unique_tracks['audio_features'].apply(predict_emotion)
 
-    # Merge emotions back to the main DataFrame
+    # Unir las emociones de regreso al DataFrame principal
     df = df.merge(unique_tracks[['Song_ID', 'emotion']], on='Song_ID', how='left')
 
-
-    # Display Top Artist and Favorite Song if available
+    # Calcular y mostrar el Artista Principal
     artista_favorito = df["Artist_name"].value_counts().idxmax()
     st.write(f"**Artista más escuchado:** {artista_favorito}")
 
-    # Determine the most frequent song for the favorite artist
+    # Calcular la canción favorita del artista principal
     fav_song_df = df[(df['Artist_name'] == artista_favorito)]
     if not fav_song_df.empty:
         cancion_favorita = fav_song_df['Song_Name'].value_counts().idxmax()
         st.write(f"**Canción favorita de {artista_favorito}:** {cancion_favorita}")
 
-        # Display emotion for the specific favorite song (using the existing logic)
+        # Obtener la emoción de esa canción en específico
         fav_track_id = fav_song_df[fav_song_df['Song_Name'] == cancion_favorita]['Song_ID'].iloc[0]
         fav_song_emotion = df[(df['Song_ID'] == fav_track_id)]['emotion'].iloc[0]
+        
         if fav_song_emotion != "Desconocida":
             st.subheader(f"Emoción de '{cancion_favorita}':")
-            st.success(f"La emoción asociada a '{cancion_favorita}' es: **{fav_song_emotion}**")
+            st.success(f"La emoción asociada a {cancion_favorita} es: {fav_song_emotion}")
         else:
             st.warning("No se pudo predecir la emoción para tu canción favorita.")
 
+    st.separator()
     st.subheader("Análisis de Emociones en tus Escuchas Recientes:")
 
-    # Overall Emotion Distribution
+    # --- Gráfica 1: Distribución General ---
     st.markdown("##### Distribución General de Emociones")
     emotion_counts = df['emotion'].value_counts().reset_index()
     emotion_counts.columns = ['Emoción', 'Cantidad']
     fig_emotion_dist = px.pie(emotion_counts, values='Cantidad', names='Emoción', title='Distribución General de Emociones en tus Escuchas')
     st.plotly_chart(fig_emotion_dist, use_container_width=True)
 
-    # Emotion by Hour of Day
+    # --- Gráfica 2: Emociones por Hora ---
     st.markdown("##### Emociones por Hora del Día")
     emotion_by_hour = df.groupby(['hour_of_day', 'emotion']).size().unstack(fill_value=0)
     if not emotion_by_hour.empty:
@@ -125,7 +146,7 @@ if 'df' in globals() and 'sp' in globals():
     else:
         st.info("No hay suficientes datos para mostrar la distribución de emociones por hora.")
 
-    # Emotion by Day of Week
+    # --- Gráfica 3: Emociones por Día ---
     st.markdown("##### Emociones por Día de la Semana")
     emotion_by_day = df.groupby(['day_of_week', 'emotion']).size().unstack(fill_value=0)
     if not emotion_by_day.empty:
@@ -139,21 +160,12 @@ if 'df' in globals() and 'sp' in globals():
     else:
         st.info("No hay suficientes datos para mostrar la distribución de emociones por día.")
 
-
+    # --- Historial Completo ---
     st.subheader("Todas las canciones recientes con sus emociones:")
     st.dataframe(df[['Song_Name', 'Artist_name', 'emotion', 'played_at']], use_container_width=True)
 
-
 else:
-    st.error("Las variables necesarias ('df', 'sp') no se encontraron en el entorno. Por favor, ejecuta las celdas anteriores para cargar los datos.")
-    if 'artista_favorito' not in globals():
-        st.warning("`artista_favorito` no está definido. Asegúrate de ejecutar la celda que lo calcula.")
-    if 'cancion_favorita' not in globals():
-        st.warning("`cancion_favorita` no está definido. Asegúrate de ejecutar la celda que lo calcula.")
-
-
-st.markdown("---")
-st.markdown("**Instrucciones para ejecutar la aplicación:**")
-st.markdown("1. **Instala Streamlit** (si aún no lo has hecho): `!pip install streamlit`")
-st.markdown("2. **Guarda este código** en un archivo llamado `app.py` (o cualquier otro nombre con extensión `.py`).")
-st.markdown("3. **Ejecuta la aplicación** desde tu terminal con: `streamlit run app.py`")
+    if sp is None:
+        st.error("No se pudo establecer conexión con Spotify. Por favor, revisa tus credenciales CLIENT_ID y CLIENT_SECRET.")
+    else:
+        st.error(f"❌ El archivo `{csv_filename}` no se encuentra en el repositorio. Recuerda subir el archivo CSV generado en tu Colab.")
