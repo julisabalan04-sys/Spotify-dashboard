@@ -1,1 +1,4 @@
-Streamlit
+%%writefile requirements.txt
+streamlit
+pandas
+spotipy
