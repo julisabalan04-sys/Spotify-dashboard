@@ -59,13 +59,20 @@ st.markdown("Esta aplicación predice el tipo de emoción de tus canciones escuc
 
 st.header("Tus Preferencias Musicales Recientes:")
 
-try:
-    # Cargamos el CSV que tienes en tu repositorio
-    df = pd.read_csv('datos_canciones.csv')
-    
-    # Nota: Si necesitas 'sp' para hacer llamadas en vivo a la API de Spotify, 
-    # debes inicializarlo aquí con tus credenciales. 
-    # Si solo vas a usar los datos del CSV, puedes omitir 'sp'.
+# --- Recuperar datos cargando el archivo directamente ---
+import pandas as pd
+import pytz
+
+df = pd.read_csv('datos_canciones.csv')
+
+# Asegurar que 'played_at' es datetime
+if not pd.api.types.is_datetime64_any_dtype(df['played_at']):
+    df['played_at'] = pd.to_datetime(df['played_at'])
+    mexico_tz = pytz.timezone('America/Mexico_City')
+    try:
+        df['played_at'] = df['played_at'].dt.tz_convert(mexico_tz)
+    except TypeError:
+        df['played_at'] = df['played_at'].dt.tz_localize('UTC').dt.tz_convert(mexico_tz)
     
 except Exception as e:
     st.error(f"Error al cargar el archivo de datos: {e}")
