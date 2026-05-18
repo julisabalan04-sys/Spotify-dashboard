@@ -98,7 +98,7 @@ if 'df' in globals() and 'sp' in globals():
         fav_song_emotion = df[(df['Song_ID'] == fav_track_id)]['emotion'].iloc[0]
         if fav_song_emotion != "Desconocida":
             st.subheader(f"Emoción de '{cancion_favorita}':")
-            st.success(f"La emoción asociada a '"{cancion_favorita}"' es: **{fav_song_emotion}**")
+            st.success(f"La emoción asociada a '{cancion_favorita}' es: **{fav_song_emotion}**")
         else:
             st.warning("No se pudo predecir la emoción para tu canción favorita.")
 
